@@ -1,10 +1,12 @@
+<img width="2765" height="1862" alt="Picture2" src="https://github.com/user-attachments/assets/82ffe31c-52d5-482a-b4fb-86d00cab7d9a" />
 # holy-script for GWAS
 An automated GWAS summary statistic munging script. Automatically cleans, detects columns, merges RSIDs, and prepares GWAS summary statistics for downstream analysis.
 
 The final output is a tab-delimted file with the following columns:
 RSID  CHR  POS  A1  A2  MAF  BETA  SE  Z  P  N
 
-Script can handle gzipped files and files with any columns.
+Script can handle gzipped files and files with any columns.![Uploading Picture2.png…]()
+
 If it is impossible to generate one of the final columns, it will be assigned as NA.
 
 
