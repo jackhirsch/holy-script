@@ -12,7 +12,7 @@ An automated GWAS summary statistic munging script. Automatically cleans, detect
 The final output is a tab-delimted file with the following columns:
 RSID  CHR  POS  A1  A2  MAF  BETA  SE  Z  P  N
 
-Script can handle gzipped files and files with any columns.![Uploading Picture2.png…]()
+Script can handle gzipped files and files with any columns.
 
 If it is impossible to generate one of the final columns, it will be assigned as NA.
 
