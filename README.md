@@ -1,4 +1,4 @@
-# holy-script
+# holy-script for GWAS
 An automated GWAS summary statistic munging script. Automatically cleans, detects columns, merges RSIDs, and prepares GWAS summary statistics for downstream analysis.
 
 The final output is a tab-delimted file with the following columns:
