@@ -99,7 +99,7 @@ install.packages(c("data.table", "optparse"))
 #    Conda:   conda install -c conda-forge git-lfs
 
 # 2. Clone the repo
-git clone [https://github.com/your-org/holy-script.git](https://github.com/jackhirsch/holy-script)
+git clone https://github.com/jackhirsch/holy-script
 cd holy-script
 
 # 3. Pull the large reference files via LFS
