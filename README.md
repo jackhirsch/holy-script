@@ -98,6 +98,8 @@ install.packages(c("data.table", "optparse"))
 #    Ubuntu:  sudo apt install git-lfs
 #    Conda:   conda install -c conda-forge git-lfs
 
+or in cluster: module load git-lfs
+
 # 2. Clone the repo
 git clone https://github.com/jackhirsch/holy-script
 cd holy-script
