@@ -451,7 +451,7 @@ A: 1000G MAF reference files for other populations (AFR, EAS, SAS, AMR) are not 
 
 ## Contributing
 
-Issues and pull requests are welcome. Please open an issue before starting large changes.
+Issues and pull requests are welcome. Please open an issue before starting large changes. This is a work in progress!
 
 ---
 
@@ -461,6 +461,6 @@ MIT License. See [LICENSE](LICENSE).
 
 ---
 
-## Citation
+## Citation (optional)
 
-If you use holy-script in published research, please cite this repository and acknowledge the 1000 Genomes Project for reference allele frequencies.
+If you use holy-script in published research, feel free to cite this repository and acknowledge the 1000 Genomes Project for reference allele frequencies.
