@@ -29,8 +29,6 @@ To run, simply ./holy-script "sumstat_file" "genome build # (37 or 38)" "ancestr
 - [Statistical Notes](#statistical-notes)
 - [Logging](#logging)
 - [Examples](#examples)
-- [FAQ](#faq)
-- [License](#license)
 
 ---
 
@@ -423,33 +421,6 @@ Rscript holy_script_gwas.R \
 
 ---
 
-## FAQ
-
-**Q: My file has no header row — will this work?**
-A: `data.table::fread` with `header=TRUE` will treat the first row as a header. If your file truly has no header, add one before running. If an RSID column cannot be detected from the header, the script will scan column values for `rs`-prefixed entries.
-
-**Q: What if I have both CHR/POS and RSID?**
-A: RSID is used as the primary merge key. CHR/POS are preserved for output.
-
-**Q: Does this work for binary traits (case/control)?**
-A: Yes. Provide log(OR) as BETA or an OR column. The script converts OR → log(OR) automatically.
-
-**Q: Can I run this on a SLURM cluster?**
-A: Yes. The script has no interactive elements. Wrap it in a SLURM batch script:
-```bash
-#!/bin/bash
-#SBATCH --mem=32G --cpus-per-task=4
-module load R/4.3.0
-Rscript holy_script_gwas.R --sumstat $SUMSTAT ...
-```
-
-**Q: What build is supported?**
-A: Build 37 (hg19) and Build 38 (hg38). Provide matching reference files for your build.
-
-**Q: Why is ancestry only EUR?**
-A: 1000G MAF reference files for other populations (AFR, EAS, SAS, AMR) are not yet integrated but the architecture is designed to support them. PRs welcome.
-
----
 
 ## Contributing
 
