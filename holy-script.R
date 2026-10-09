@@ -2,8 +2,7 @@
 # =============================================================================
 #  holy-script — GWAS Summary Statistics Harmonizer
 #  Version: 1.0.0
-#  Author:  holy-script contributors
-#  License: MIT
+#  Author:  Jack Hirsch
 #
 #  Full pipeline: RSID merge · allele alignment · MAF correction ·
 #  Z-score derivation · beta/SE reconstruction · HPC-efficient streaming
@@ -21,29 +20,40 @@ suppressPackageStartupMessages({
 # 0. CLI ARGUMENT PARSING
 # =============================================================================
 
+# Resolve the directory containing this script (works when called with Rscript).
+script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_dir <- if (length(script_arg)) dirname(normalizePath(sub("^--file=", "", script_arg[1]))) else getwd()
+
 option_list <- list(
-  make_option("--sumstat",          type = "character", default = NULL,
+  make_option("--sumstat", type = "character", default = NULL,
               help = "Input GWAS summary statistics file (.txt/.tsv/.csv/.gz)"),
-  make_option("--build",            type = "integer",   default = 37,
+  make_option("--build", type = "integer", default = 37,
               help = "Genome build: 37 or 38 [default: 37]"),
-  make_option("--ancestry",         type = "character", default = "EUR",
-              help = "Ancestry (only EUR implemented) [default: EUR]"),
-  make_option("--N",                type = "integer",   default = NULL,
+  make_option("--ancestry", type = "character", default = "EUR",
+              help = "Ancestry: EUR, AFR, or AMR [default: EUR]"),
+  make_option("--N", type = "integer", default = NULL,
               help = "Sample size (overrides N column if provided)"),
-  make_option("--maf_ref_path",     type = "character",
-              default = file.path(dirname(sys.frame(1)$ofile), "refs", "EA_freq.afreq"),
-              help = "Path to 1000G EUR .afreq file [default: refs/EA_freq.afreq]"),
-  make_option("--rsid_ref_path",    type = "character",
-              default = file.path(dirname(sys.frame(1)$ofile), "refs", "build37_chr{CHR}.txt"),
-              help = "Pattern for CHR:POS:A2:A1->RSID files [default: refs/build37_chr{CHR}.txt]"),
-  make_option("--rsid_to_chrpos_path", type = "character",
-              default = file.path(dirname(sys.frame(1)$ofile), "refs", "rsid_chrpos_build37.tsv"),
-              help = "Path to RSID->CHR/POS mapping file [default: refs/rsid_chrpos_build37.tsv]"),
-  make_option("--output",           type = "character", default = "harmonized_gwas.tsv",
+  make_option("--maf_ref_path", type = "character", default = NULL,
+              help = "Optional path to ancestry-specific PLINK2 .afreq file; defaults to ref/{EA,AFR,AMR}_freq.afreq"),
+  make_option("--rsid_ref_path", type = "character",
+              default = "/gpfs/gibbs/pi/gelernter/jh3583/rsids_37/build37_allmultiallelic_chr{CHR}.txt",
+              help = "Pattern for CHR:POS:REF:ALT->RSID files [default: Grace rsids_37 reference]"),
+  make_option("--rsid_to_chrpos_path", type = "character", default = NULL,
+              help = "Optional RSID->CHR/POS mapping file; omitted when input already has CHR/POS"),
+  make_option("--output", type = "character", default = "harmonized_gwas.tsv",
               help = "Output file path [default: harmonized_gwas.tsv]")
 )
 
 opt <- parse_args(OptionParser(option_list = option_list))
+opt$ancestry <- toupper(opt$ancestry)
+if (is.null(opt$maf_ref_path)) {
+  maf_file <- switch(opt$ancestry,
+                     EUR = "EA_freq.afreq",
+                     AFR = "AFR_freq.afreq",
+                     AMR = "AMR_freq.afreq",
+                     NULL)
+  if (!is.null(maf_file)) opt$maf_ref_path <- file.path(script_dir, "ref", maf_file)
+}
 
 # =============================================================================
 # 1. LOGGING UTILITIES
@@ -96,7 +106,12 @@ log_info("=== holy-script GWAS Harmonizer v1.0.0 ===")
 if (is.null(opt$sumstat))      log_error("--sumstat is required.")
 if (!file.exists(opt$sumstat)) log_error(sprintf("Input file not found: %s", opt$sumstat))
 if (!opt$build %in% c(37L, 38L)) log_error("--build must be 37 or 38.")
-if (opt$ancestry != "EUR")    log_error("Only EUR ancestry is currently implemented.")
+if (!opt$ancestry %in% c("EUR", "AFR", "AMR")) {
+  log_error("--ancestry must be EUR, AFR, or AMR.")
+}
+if (opt$build == 38L && grepl("rsids_37", opt$rsid_ref_path, fixed = TRUE)) {
+  log_error("The configured RSID reference is GRCh37. Supply a GRCh38 --rsid_ref_path or use --build 37.")
+}
 
 log_info(sprintf("Input     : %s", opt$sumstat))
 log_info(sprintf("Build     : GRCh%d", opt$build))
@@ -209,7 +224,7 @@ detect_columns <- function(dt) {
   map$OR   <- find_col(cols, c("or","oddsratio","odds_ratio"))
   map$SE   <- find_col(cols, c("se","stderr","standard_error"))
   if (is.null(map$SE)) map$SE <- find_col(cols, c("se"), exact = FALSE)
-  map$Z    <- find_col(cols, c("z","zstat","z_score","zvalue","zstatistic","zscore"))
+  map$Z    <- find_col(cols, c("z","zstat","z_stat","z_score","zvalue","zstatistic","zscore"))
   map$P    <- find_col(cols, c("p","pval","p_val","pvalue","p_value","p.value"))
   # Broader P search: any col containing 'p'
   if (is.null(map$P)) {
@@ -335,11 +350,11 @@ recover_rsids_from_chrpos <- function(dt, rsid_ref_path) {
   }
 
   need_rsid <- which(is.na(dt$RSID) & !is.na(dt$CHR) & !is.na(dt$POS))
-  log_info(sprintf("Recovering RSIDs for %d SNPs using CHR:POS:A2:A1 key...", length(need_rsid)))
+  log_info(sprintf("Recovering RSIDs for %d SNPs using position + allele keys...", length(need_rsid)))
 
   sub   <- dt[need_rsid]
-  sub[, LOOKUP_KEY := paste(CHR, POS, A2, A1, sep = ":")]
   chrs  <- unique(sub$CHR)
+  complement_allele <- function(x) chartr("ACGT", "TGCA", toupper(x))
   recovered <- 0L
 
   for (chr in chrs) {
@@ -354,14 +369,28 @@ recover_rsids_from_chrpos <- function(dt, rsid_ref_path) {
       error = function(e) { log_warn(sprintf("  Could not read %s", ref_path)); NULL }
     )
     if (is.null(ref)) next
-    setkey(ref, KEY)
-
-    idx_chr  <- need_rsid[sub$CHR == chr]
-    keys_chr <- sub$LOOKUP_KEY[sub$CHR == chr]
-    merged   <- ref[keys_chr]
-    hits     <- !is.na(merged$RSID_REF)
+    idx_chr <- need_rsid[sub$CHR == chr]
+    sub_chr <- sub[sub$CHR == chr]
+    # The reference key is CHR:POS:REF:ALT. Try both allele orders and
+    # their strand complements; use the first exact match for each input row.
+    key_candidates <- cbind(
+      paste(sub_chr$CHR, sub_chr$POS, sub_chr$A2, sub_chr$A1, sep = ":"),
+      paste(sub_chr$CHR, sub_chr$POS, sub_chr$A1, sub_chr$A2, sep = ":"),
+      paste(sub_chr$CHR, sub_chr$POS, complement_allele(sub_chr$A2), complement_allele(sub_chr$A1), sep = ":"),
+      paste(sub_chr$CHR, sub_chr$POS, complement_allele(sub_chr$A1), complement_allele(sub_chr$A2), sep = ":")
+    )
+    ref_keys <- ref[[1L]]
+    matched_rsid <- rep(NA_character_, nrow(sub_chr))
+    for (j in seq_len(ncol(key_candidates))) {
+      pending <- which(is.na(matched_rsid))
+      if (!length(pending)) break
+      hit_idx <- match(key_candidates[pending, j], ref_keys)
+      ok <- !is.na(hit_idx)
+      matched_rsid[pending[ok]] <- as.character(ref[[2L]][hit_idx[ok]])
+    }
+    hits <- !is.na(matched_rsid)
     if (any(hits)) {
-      dt$RSID[idx_chr[hits]] <- merged$RSID_REF[hits]
+      dt$RSID[idx_chr[hits]] <- matched_rsid[hits]
       recovered <- recovered + sum(hits)
     }
   }
@@ -373,7 +402,7 @@ recover_rsids_from_chrpos <- function(dt, rsid_ref_path) {
 
 recover_chrpos_from_rsid <- function(dt, rsid_to_chrpos_path) {
   if (is.null(rsid_to_chrpos_path)) {
-    log_warn("No --rsid_to_chrpos_path provided; cannot recover CHR/POS from RSID.")
+    log_info("No --rsid_to_chrpos_path provided; skipping RSID-to-CHR/POS recovery.")
     return(dt)
   }
   need_pos <- which(!is.na(dt$RSID) & (is.na(dt$CHR) | is.na(dt$POS)))
@@ -421,48 +450,90 @@ recover_chrpos_from_rsid <- function(dt, rsid_to_chrpos_path) {
 # =============================================================================
 
 merge_maf_reference <- function(dt, maf_ref_path) {
+  # Always create these internal columns because downstream alignment checks them.
+  if (!"REF_REF" %in% names(dt)) dt[, REF_REF := NA_character_]
+  if (!"ALT_REF" %in% names(dt)) dt[, ALT_REF := NA_character_]
+  if (!"ALT_FREQ" %in% names(dt)) dt[, ALT_FREQ := NA_real_]
+
+  # Input frequency columns take precedence. A frequency in [0, 1] is usable;
+  # the later harmonization step converts frequencies > 0.5 to the minor-allele
+  # convention while swapping alleles and effect signs consistently.
+  needs_freq <- is.na(dt$MAF) | !is.finite(dt$MAF) | dt$MAF < 0 | dt$MAF > 1
+  if (!any(needs_freq)) {
+    log_info("Input allele-frequency column is complete; skipping ancestry frequency reference.")
+    return(dt)
+  }
+  log_info(sprintf("Input allele frequencies missing/invalid for %d / %d rows; reference lookup may fill these rows.",
+                   sum(needs_freq), nrow(dt)))
+
   if (is.null(maf_ref_path)) {
-    log_warn("No --maf_ref_path provided; MAF will rely on input file only.")
+    log_warn("No --maf_ref_path provided; missing frequencies will remain NA.")
     return(dt)
   }
   if (!file.exists(maf_ref_path)) {
     log_warn(sprintf("MAF reference file not found: %s — skipping MAF merge.", maf_ref_path))
     return(dt)
   }
-  log_info("Loading 1000G EUR MAF reference...")
+  log_info(sprintf("Loading %s ancestry MAF reference to fill missing frequencies: %s", opt$ancestry, maf_ref_path))
 
-  # afreq format: #CHROM ID REF ALT ALT_FREQS OBS_CT
+  # PLINK2 .afreq format: #CHROM ID REF ALT ALT_FREQS OBS_CT.
+  # Match by rsID AND allele pair so multiallelic rsIDs do not get confused.
   ref <- tryCatch(
-    fread(maf_ref_path, header = TRUE, data.table = TRUE, showProgress = FALSE,
-          col.names = c("CHROM","ID","REF","ALT","ALT_FREQS","OBS_CT")),
+    fread(maf_ref_path, header = TRUE, data.table = TRUE, showProgress = FALSE),
     error = function(e) {
       log_warn(sprintf("Could not read MAF reference: %s", conditionMessage(e))); NULL
     }
   )
   if (is.null(ref)) return(dt)
-
+  if (ncol(ref) < 6L) {
+    log_warn("MAF reference does not have the six expected PLINK2 .afreq columns; skipping MAF merge.")
+    return(dt)
+  }
+  setnames(ref, names(ref)[seq_len(6L)], c("CHROM", "ID", "REF", "ALT", "ALT_FREQS", "OBS_CT"))
   ref <- ref[!is.na(ID) & ID != "."]
-  ref[, ALT_FREQS := suppressWarnings(as.numeric(ALT_FREQS))]
-  ref <- ref[!is.na(ALT_FREQS)]
-  ref[, REF := toupper(REF)][, ALT := toupper(ALT)]
-  setkey(ref, ID)
+  ref[, `:=`(REF = toupper(as.character(REF)), ALT = toupper(as.character(ALT)),
+             ALT_FREQS = suppressWarnings(as.numeric(as.character(ALT_FREQS))))]
+  ref <- ref[!is.na(ALT_FREQS) & !grepl(",", ALT)]
+  ref[, REFKEY := paste(ID, REF, ALT, sep = "|")]
+  log_info(sprintf("  %d biallelic frequency entries loaded.", nrow(ref)))
 
-  log_info(sprintf("  MAF reference: %d entries loaded.", nrow(ref)))
-
-  # Merge on RSID
-  has_rsid <- !is.na(dt$RSID)
-  if (sum(has_rsid) == 0L) {
-    log_warn("No RSIDs available for MAF reference merge.")
+  # Only attempt reference matching for rows whose input frequency is missing
+  # or invalid; never overwrite a valid frequency supplied by the GWAS file.
+  has_rsid <- needs_freq & !is.na(dt$RSID) & !is.na(dt$A1) & !is.na(dt$A2)
+  if (!any(has_rsid)) {
+    log_warn("No rows needing frequency fill have RSID and both alleles available.")
     return(dt)
   }
 
-  merged <- ref[dt$RSID[has_rsid], .(REF_REF = REF, ALT_REF = ALT, ALT_FREQ = ALT_FREQS)]
-
-  dt[has_rsid, REF_REF  := merged$REF_REF]
-  dt[has_rsid, ALT_REF  := merged$ALT_REF]
-  dt[has_rsid, ALT_FREQ := merged$ALT_FREQ]
-
-  log_info(sprintf("  MAF merged for %d / %d RSIDs.", sum(!is.na(dt$ALT_FREQ)), sum(has_rsid)))
+  complement_allele <- function(x) chartr("ACGT", "TGCA", toupper(x))
+  ii <- which(has_rsid)
+  a1 <- toupper(dt$A1[ii]); a2 <- toupper(dt$A2[ii]); rs <- dt$RSID[ii]
+  candidates <- cbind(
+    paste(rs, a2, a1, sep = "|"),
+    paste(rs, a1, a2, sep = "|"),
+    paste(rs, complement_allele(a2), complement_allele(a1), sep = "|"),
+    paste(rs, complement_allele(a1), complement_allele(a2), sep = "|")
+  )
+  # Preserve the first match among exact orientation, reversed orientation,
+  # and strand-complement alternatives.
+  match_idx <- rep(NA_integer_, length(ii))
+  for (j in seq_len(ncol(candidates))) {
+    pending <- which(is.na(match_idx))
+    if (!length(pending)) break
+    hit_idx <- match(candidates[pending, j], ref$REFKEY)
+    ok <- !is.na(hit_idx)
+    match_idx[pending[ok]] <- hit_idx[ok]
+  }
+  matched <- !is.na(match_idx)
+  dt[, `:=`(REF_REF = NA_character_, ALT_REF = NA_character_, ALT_FREQ = NA_real_)]
+  if (any(matched)) {
+    row_idx <- ii[matched]
+    ref_idx <- match_idx[matched]
+    dt$REF_REF[row_idx] <- ref$REF[ref_idx]
+    dt$ALT_REF[row_idx] <- ref$ALT[ref_idx]
+    dt$ALT_FREQ[row_idx] <- ref$ALT_FREQS[ref_idx]
+  }
+  log_info(sprintf("  MAF matched by rsID + allele pair for %d / %d rows.", sum(matched), length(ii)))
   dt
 }
 
@@ -490,6 +561,8 @@ align_alleles_and_maf <- function(dt) {
     freq <- dt$ALT_FREQ[i]  # frequency of ALT allele
 
     if (is.na(a1) || is.na(a2)) next
+    # Keep a valid input A1 frequency whenever one was supplied.
+    if (!is.na(dt$MAF[i]) && is.finite(dt$MAF[i]) && dt$MAF[i] >= 0 && dt$MAF[i] <= 1) next
 
     # Case 1: A1=ALT, A2=REF → MAF = freq (frequency of A1=ALT)
     if (a1 == alt && a2 == ref) {
