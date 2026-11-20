@@ -18,7 +18,6 @@ Author: Jack Hirsch
 
 ## Repository contents
 
-A minimal repository can be organized as follows:
 
 ```text
 holy-script/
@@ -84,8 +83,6 @@ Rscript holy-script.R \
   --rsid_ref_path "/path/to/rsids_37/build37_allmultiallelic_chr{CHR}.txt" \
   --output holy_sumstats.tsv
 ```
-
-\ith the script's default configuration.
 
 #### Where to obtain the data
 
